@@ -421,29 +421,24 @@ void publish_node_birth(struct mosquitto *mosq) {
 
 	// Create a DataSet
 	org_eclipse_tahu_protobuf_Payload_DataSet dataset = org_eclipse_tahu_protobuf_Payload_DataSet_init_default;
-	uint32_t datatypes[] = { DATA_SET_DATA_TYPE_INT8, DATA_SET_DATA_TYPE_INT16, DATA_SET_DATA_TYPE_INT32 };
-	const char *column_keys[] = { "Int8s", "Int16s", "Int32s" };
-	org_eclipse_tahu_protobuf_Payload_DataSet_Row *row_data = (org_eclipse_tahu_protobuf_Payload_DataSet_Row *)
-		calloc(2, sizeof(org_eclipse_tahu_protobuf_Payload_DataSet_Row));
-	row_data[0].elements_count = 3;
-	row_data[0].elements = (org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue *)
-		calloc(3, sizeof(org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue));
-	row_data[0].elements[0].which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
-	row_data[0].elements[0].value.int_value = 0;
-	row_data[0].elements[1].which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
-	row_data[0].elements[1].value.int_value = 1;
-	row_data[0].elements[2].which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
-	row_data[0].elements[2].value.int_value = 2;
-	row_data[1].elements_count = 3;
-	row_data[1].elements = (org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue *)
-		calloc(3, sizeof(org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue));
-	row_data[1].elements[0].which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
-	row_data[1].elements[0].value.int_value = 3;
-	row_data[1].elements[1].which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
-	row_data[1].elements[1].value.int_value = 4;
-	row_data[1].elements[2].which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
-	row_data[1].elements[2].value.int_value = 5;
-	init_dataset(&dataset, 2, 3, datatypes, column_keys, row_data);
+	// Just for reference, this is the number of columns and row we are putting into our dataset
+	const int num_columns = 3;
+	const int num_rows = 2;
+	// Next we define the datatype and name on each column
+	const uint32_t datatypes[3] = { DATA_SET_DATA_TYPE_INT8, DATA_SET_DATA_TYPE_INT16, DATA_SET_DATA_TYPE_INT32 };
+	const char *column_keys[3] = { "Int8s", "Int16s", "Int32s" };
+	const int8_t column_one_data[2] = { 0, 3 };
+	const int16_t column_two_data[2] = { 1, 4 };
+	const int32_t column_three_data[2] = { 2, 5 };
+	org_eclipse_tahu_protobuf_Payload_DataSet_Row *row_data = (org_eclipse_tahu_protobuf_Payload_DataSet_Row *)calloc(num_rows, sizeof(org_eclipse_tahu_protobuf_Payload_DataSet_Row));
+	for (int i = 0; i < num_rows; i++) {
+		row_data[i].elements_count = num_columns;
+		row_data[i].elements = (org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue *)calloc(num_columns, sizeof(org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue));
+		set_dataset_value(&row_data[i].elements[0], datatypes[0], &column_one_data[i], sizeof(int8_t));
+		set_dataset_value(&row_data[i].elements[1], datatypes[1], &column_two_data[i], sizeof(int16_t));
+		set_dataset_value(&row_data[i].elements[2], datatypes[2], &column_three_data[i], sizeof(int32_t));
+	}
+	init_dataset(&dataset, num_rows, num_columns, datatypes, column_keys, row_data);
 
 	// Create the a Metric with the DataSet value and add it to the payload
 	fprintf(stdout, "Adding metric: 'DataSet'\n");

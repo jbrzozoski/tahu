@@ -232,6 +232,66 @@ int set_metric_value(org_eclipse_tahu_protobuf_Payload_Metric *metric, uint32_t 
 	return 0;
 }
 
+int set_dataset_value(org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue *datasetvalue, uint32_t datatype, const void *value, size_t size) {
+	DEBUG_PRINT("Set dataset value...\n");
+	switch (datatype) {
+	case DATA_SET_DATA_TYPE_INT8:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
+		datasetvalue->value.int_value = *(int8_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_INT16:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
+		datasetvalue->value.int_value = *(int16_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_INT32:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
+		datasetvalue->value.int_value = *(int32_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_INT64:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_long_value_tag;
+		datasetvalue->value.long_value = *(int64_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_UINT8:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
+		datasetvalue->value.int_value = *(uint8_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_UINT16:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_int_value_tag;
+		datasetvalue->value.int_value = *(uint16_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_UINT32:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_long_value_tag;
+		datasetvalue->value.long_value = *(uint32_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_UINT64:
+	case DATA_SET_DATA_TYPE_DATETIME:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_long_value_tag;
+		datasetvalue->value.long_value = *(uint64_t *)value;
+		break;
+	case DATA_SET_DATA_TYPE_FLOAT:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_float_value_tag;
+		datasetvalue->value.float_value = *(float *)value;
+		break;
+	case DATA_SET_DATA_TYPE_DOUBLE:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_double_value_tag;
+		datasetvalue->value.double_value = *(double *)value;
+		break;
+	case DATA_SET_DATA_TYPE_BOOLEAN:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_boolean_value_tag;
+		datasetvalue->value.boolean_value = *(bool *)value;
+		break;
+	case DATA_SET_DATA_TYPE_STRING:
+	case DATA_SET_DATA_TYPE_TEXT:
+		datasetvalue->which_value = org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue_string_value_tag;
+		datasetvalue->value.string_value = strndup(value, size);
+		break;
+	default:
+		fprintf(stderr, "Unhandled datatype(%u) in set_dataset_value\n", datatype);
+		return -1;
+	}
+	return 0;
+}
+
 int add_simple_metric(org_eclipse_tahu_protobuf_Payload *payload,
 					  const char *name,
 					  bool has_alias,

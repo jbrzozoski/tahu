@@ -222,6 +222,30 @@ int add_propertyset_to_metric(org_eclipse_tahu_protobuf_Payload_Metric *metric,
 int set_metric_value(org_eclipse_tahu_protobuf_Payload_Metric *metric, uint32_t datatype, const void *value, size_t size);
 
 /**
+ * Helper function to properly cast and push a value into the
+ * datasetvalue structure.
+ *
+ * <p>Mostly useful when building dataset metrics.
+ *
+ * (No pointers passed into this function are retained by the
+ * target structure)
+ *
+ * @param datasetvalue
+ *                 Pointer to datasetvalue structure to receive
+ *                 the value
+ * @param datatype Datatype of the value being received (e.g.
+ *                 DATA_SET_DATA_TYPE_INT8)
+ * @param value    Pointer to the value to use (cannot be NULL)
+ * @param size     Size of the memory pointed to by value
+ *
+ * @return Returns >= 0 on success, or negative on failure
+ */
+int set_dataset_value(org_eclipse_tahu_protobuf_Payload_DataSet_DataSetValue *datasetvalue,
+					  uint32_t datatype,
+					  const void *value,
+					  size_t size);
+
+/**
  * Add a simple Metric to an existing Payload
  *
  * <p>Caution: When using datatype METRIC_DATA_TYPE_DATASET or
