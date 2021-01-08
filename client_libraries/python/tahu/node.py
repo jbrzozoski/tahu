@@ -11,18 +11,18 @@ from tahu import sparkplug_b, sparkplug_b_pb2
 
 def _rebirth_command_handler(tag, context, value):
 	tag._logger.info('Rebirth command received')
-	assert(isinstance(tag._parent_device,sparkplug_edge_device))
+	assert(isinstance(tag._parent_device,sparkplug_node))
 	# We don't care what value the server wrote to the tag, any write is considered a trigger.
 	tag._parent_device._needs_to_send_birth = True
 
 def _next_server_command_handler(tag, context, value):
 	tag._logger.info('Next Server command received')
-	assert(isinstance(tag._parent_device,sparkplug_edge_device))
+	assert(isinstance(tag._parent_device,sparkplug_node))
 	# We don't care what value the server wrote to the tag, any write is considered a trigger.
 	tag._parent_device._mqtt_param_index = (tag._parent_device._mqtt_param_index + 1) % len(tag._parent_device._mqtt_params)
 	tag._parent_device._reconnect_client = True
 
-class sparkplug_tag(object):
+class sparkplug_metric(object):
 	def __init__(self,parent_device,name,datatype,value=None,cmd_handler=None,
 				 cmd_context=None,engUnit=None,engLow=None,engHigh=None,
 				 documentation=None,quality=None):
@@ -40,7 +40,7 @@ class sparkplug_tag(object):
 		self._quality        = int(quality) if quality else None
 		self._alias          = parent_device._attach_tag(self)
 
-	def fill_in_sparkplug_metric(self,new_metric,birth=False):
+	def _fill_in_payload_metric(self,new_metric,birth=False):
 		if birth:
 			new_metric.name = self._name
 		new_metric.alias = self._alias
@@ -141,7 +141,7 @@ class _sparkplug_base_device(object):
 			alias_list = range(len(self._tags))
 		for m in alias_list:
 			new_metric = tx_payload.metrics.add()
-			self._tags[m].fill_in_sparkplug_metric(new_metric,birth=birth)
+			self._tags[m]._fill_in_payload_metric(new_metric,birth=birth)
 		return tx_payload
 
 	def _get_topic(self,cmd_type):
@@ -190,7 +190,7 @@ class _sparkplug_base_device(object):
 		# We can return True to let the caller know it was handled
 		return True
 
-class sparkplug_edge_device(_sparkplug_base_device):
+class sparkplug_node(_sparkplug_base_device):
 	def __init__(self,mqtt_params,group_id,edge_node_id,provide_bdSeq=True,provide_controls=True,logger=None):
 		super().__init__()
 		self._mqtt_params = list(mqtt_params)
@@ -209,14 +209,14 @@ class sparkplug_edge_device(_sparkplug_base_device):
 		self._reconnect_client = False
 
 		if provide_bdSeq:
-			new_tag = sparkplug_tag(self,'bdSeq',sparkplug_b.Datatype.Int64,value=sparkplug_b.get_sparkplug_time())
+			new_tag = sparkplug_metric(self,'bdSeq',sparkplug_b.Datatype.Int64,value=sparkplug_b.get_sparkplug_time())
 			self._bdseq_alias = new_tag._alias
 		else:
 			self._bdseq_alias = None
 		if provide_controls:
-			#sparkplug_tag(self,'Node Control/Reboot',sparkplug_b.Datatype.Boolean,value=False)
-			sparkplug_tag(self,'Node Control/Rebirth',sparkplug_b.Datatype.Boolean,value=False,cmd_handler=_rebirth_command_handler)
-			sparkplug_tag(self,'Node Control/Next Server',sparkplug_b.Datatype.Boolean,value=False,cmd_handler=_next_server_command_handler)
+			#sparkplug_metric(self,'Node Control/Reboot',sparkplug_b.Datatype.Boolean,value=False)
+			sparkplug_metric(self,'Node Control/Rebirth',sparkplug_b.Datatype.Boolean,value=False,cmd_handler=_rebirth_command_handler)
+			sparkplug_metric(self,'Node Control/Next Server',sparkplug_b.Datatype.Boolean,value=False,cmd_handler=_next_server_command_handler)
 
 	def _get_next_seq(self):
 		seq_to_use = self._sequence
@@ -253,7 +253,7 @@ class sparkplug_edge_device(_sparkplug_base_device):
 			death_payload = self._get_payload([],False)
 		return death_payload
 
-	def get_will_topic_and_payload(self):
+	def _get_will_topic_and_payload(self):
 		tx_payload = self._get_death_payload(will=True)
 		topic = self._get_topic('DEATH')
 		return topic, tx_payload.SerializeToString()
@@ -269,7 +269,7 @@ class sparkplug_edge_device(_sparkplug_base_device):
 			d.needs_to_birth = True
 		return pub_result
 
-	def attach_subdevice(self, subdevice):
+	def _attach_subdevice(self, subdevice):
 		next_index = len(self._subdevices)
 		self._subdevices.append(subdevice)
 		self._all_device_topics.append(subdevice.get_watched_topic())
@@ -308,7 +308,7 @@ class sparkplug_edge_device(_sparkplug_base_device):
 		self._logger.warning('MQTT disconnect rc={}'.format(rc))
 		self._is_connected = False
 		# The thread loop will try reconnecting for us, we just need to setup a new will first
-		will_topic, will_payload = self.get_will_topic_and_payload()
+		will_topic, will_payload = self._get_will_topic_and_payload()
 		client.will_set(will_topic, will_payload)
 
 	def _mqtt_on_message(self, client, userdata, message):
@@ -360,7 +360,7 @@ class sparkplug_edge_device(_sparkplug_base_device):
 			self._mqtt_client.tls_set(ca_certs=curr_params['ca_certs'],
 									 certfile=curr_params['certfile'],
 									 keyfile=curr_params['keyfile'])
-		will_topic, will_payload = self.get_will_topic_and_payload()
+		will_topic, will_payload = self._get_will_topic_and_payload()
 		self._mqtt_client.will_set(will_topic, will_payload)
 		self._logger.info('Starting MQTT client connection to host={}'.format(curr_params['server']))
 		self._mqtt_client.connect(host=curr_params['server'],
@@ -408,7 +408,7 @@ class sparkplug_edge_device(_sparkplug_base_device):
 			self._thread = None
 
 
-class sparkplug_subdevice(_sparkplug_base_device):
+class sparkplug_device(_sparkplug_base_device):
 	def __init__(self,parent_device,name):
 		super().__init__()
 		self._name          = str(name)
@@ -416,7 +416,7 @@ class sparkplug_subdevice(_sparkplug_base_device):
 		self._logger        = parent_device._logger.getChild(self._name)
 		self._mqtt_client   = parent_device._mqtt_client
 		self._mqtt_logger   = parent_device._mqtt_logger
-		self._parent_index  = self._parent_device.attach_subdevice(self)
+		self._parent_index  = self._parent_device._attach_subdevice(self)
 
 	def _get_next_seq(self):
 		return self._parent_device._get_next_seq()
