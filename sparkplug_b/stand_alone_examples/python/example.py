@@ -36,7 +36,6 @@ myNodeName = "Python Edge Node 1"
 myDeviceName = "Emulated Device"
 # You can define multiple connection setups here, and the node will rotate through them
 # in response to "Next Server" commands.
-# TODO - Add support to timeout bad/failed connections to the next server as well
 myMqttParams = [
 	#sparkplug_b.mqtt_params('localhost',username='admin',password='changeme'),
 	sparkplug_b.mqtt_params('test.mosquitto.org'),
@@ -44,14 +43,13 @@ myMqttParams = [
 ]
 
 def sample_cmd_handler(tag, context, value):
-	# TODO - Add methods to get the name and alias from a tag object
-	logger.info('sample_cmd_handler tag={} context={} value={}'.format(tag._name, context, value))
+	logger.info('sample_cmd_handler tag={} context={} value={}'.format(tag.name, context, value))
 	# Do whatever work we need to do...
 	# Optionally, echo the value back to the server if you want it to see the change acknowledged
 	tag.change_value(value)
 
 def fancier_date_handler(tag, context, value):
-    # A simple example of how to get from a received Sparkplug timestamp back to a Python datetime
+	# A simple example of how to get from a received Sparkplug timestamp back to a Python datetime
 	dt = datetime.fromtimestamp(sparkplug_b.sparkplug_to_utc_seconds(value), timezone.utc)
 	logger.info('fancier_date_handler received {}'.format(str(dt)))
 	# We report back the time NOW as the new value, and not the old value or the one we received.
@@ -76,8 +74,7 @@ first_time_report = datetime(2006, 11, 21, 16, 30, tzinfo=timezone.utc)
 first_time_report = sparkplug_b.get_sparkplug_time(first_time_report.timestamp())
 datetime_test_tag = node.sparkplug_metric(mySubdevice, 'datetime_test', sparkplug_b.Datatype.DateTime, value=first_time_report, cmd_handler=fancier_date_handler)
 myNode.online()
-# TODO - Add a method to find out if a device/tag is online and connected
-while not myNode._is_connected:
+while not myNode.is_connected():
 	# TODO - Add some sort of timeout feature?
 	pass
 loop_count = 0
@@ -90,21 +87,15 @@ while True:
 
 	# Next, pile up a few changes all on the same subdevice, and trigger a collected
 	# data message containing all of those manually.  (Will not work for tags on different subdevices)
-	aliases = []
 
 	# Randomly change the quality on the double_test tag...
-	aliases.append(double_test_tag.change_quality(random.choice([ignition.QualityCode.Good, ignition.QualityCode.Bad_Stale]),send_immediate=False))
+	double_test_tag.change_quality(random.choice([ignition.QualityCode.Good, ignition.QualityCode.Bad_Stale]),send_immediate=False)
 
 	# Report how many times we've gone around this loop in the uint8
-	aliases.append(u8_test_tag.change_value(loop_count,send_immediate=False))
+	u8_test_tag.change_value(loop_count,send_immediate=False)
 
-	# Send the collected message
-	# TODO - Add a feature for the devices to manage a list of unsent tags internally?
-	mySubdevice.send_data(aliases)
+	# Send anything that has changed since last time
+	mySubdevice.send_data(changed_only=True)
 
 	loop_count = loop_count + 1
-
-
-
-
 

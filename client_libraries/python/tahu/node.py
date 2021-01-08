@@ -26,24 +26,29 @@ class sparkplug_metric(object):
 	def __init__(self,parent_device,name,datatype,value=None,cmd_handler=None,
 				 cmd_context=None,engUnit=None,engLow=None,engHigh=None,
 				 documentation=None,quality=None):
+		# TODO - Protect the name/alias from being changed after creation
+		# TODO - Add support for custom properties, move existing properties into that system...
 		self._parent_device  = parent_device
 		self._logger         = parent_device._logger
-		self._name           = str(name)
+		self.name            = str(name)
 		self._datatype       = sparkplug_b.Datatype(datatype)
 		self._value          = value
+		self._last_received  = None
+		self._last_sent      = None
 		self._cmd_handler    = cmd_handler
 		self._cmd_context    = cmd_context
-		self._engUnit       = str(engUnit) if engUnit else None
+		self._engUnit        = str(engUnit) if engUnit else None
 		self._engLow         = engLow
 		self._engHigh        = engHigh
-		self._documentation    = str(documentation) if documentation else None
+		self._documentation  = str(documentation) if documentation else None
 		self._quality        = int(quality) if quality else None
-		self._alias          = parent_device._attach_tag(self)
+		self._last_quality   = None
+		self.alias           = parent_device._attach_tag(self)
 
 	def _fill_in_payload_metric(self,new_metric,birth=False):
 		if birth:
-			new_metric.name = self._name
-		new_metric.alias = self._alias
+			new_metric.name = self.name
+		new_metric.alias = self.alias
 		new_metric.datatype = self._datatype
 		# Add properties (engUnit, engLow, engHigh, documentation, quality)
 		if self._quality is not None:
@@ -51,6 +56,7 @@ class sparkplug_metric(object):
 			p = new_metric.properties.values.add()
 			p.type = sparkplug_b.Datatype.Int32
 			sparkplug_b.value_to_sparkplug(p,p.type,self._quality)
+			self._last_quality = self._quality
 		# Ignition ignores most properties except on birth
 		if birth:
 			if self._engLow is not None:
@@ -77,22 +83,21 @@ class sparkplug_metric(object):
 			new_metric.is_null = True
 		else:
 			sparkplug_b.value_to_sparkplug(new_metric,self._datatype,self._value)
+		self._last_sent = self._value
 
 	def change_value(self,value,quality=None,send_immediate=True):
 		self._value = value
 		if quality:
 			self._quality = int(quality)
-		# TODO - Skip if not connected
 		if send_immediate:
-			self._parent_device.send_data([self._alias])
-		return self._alias
+			self._parent_device.send_data([self.alias])
+		return self.alias
 
 	def change_quality(self,quality,send_immediate=True):
 		self._quality = int(quality)
-		# TODO - Skip if not connected
 		if send_immediate:
-			self._parent_device.send_data([self._alias])
-		return self._alias
+			self._parent_device.send_data([self.alias])
+		return self.alias
 
 	def _handle_sparkplug_command(self,sparkplug_metric):
 		if not sparkplug_metric.HasField('datatype'):
@@ -102,15 +107,19 @@ class sparkplug_metric(object):
 		# Ignition sometimes will report inexact datatype values in the Sparkplug payload that still
 		# use the same underlying value field of the Payload Metric protobuf...
 		if sparkplug_b.get_value_field_for_datatype(payload_datatype) != sparkplug_b.get_value_field_for_datatype(self._datatype):
-			self._logger.warning('Command received for tag {} with datatype {} but expecting {}. Ignoring.'.format(self._name, payload_datatype, self._datatype))
+			self._logger.warning('Command received for tag {} with datatype {} but expecting {}. Ignoring.'.format(self.name, payload_datatype, self._datatype))
 			return
 		# But note that we enforce OUR expected datatype on the value as we pull it from the metric
 		value = sparkplug_b.value_from_sparkplug(sparkplug_metric,self._datatype)
-		self._logger.debug('Command received for tag {} = {}'.format(self._name, value))
+		self._logger.debug('Command received for tag {} = {}'.format(self.name, value))
 		if self._cmd_handler:
 			self._cmd_handler(self, self._cmd_context, value)
 		else:
-			self._logger.info('Received command for tag {} with no handler. No action taken.'.format(self._name))
+			self._logger.info('Received command for tag {} with no handler. No action taken.'.format(self.name))
+		self._last_received = value
+
+	def changed_since_last_sent(self):
+		return ((self._value != self._last_sent) or (self._quality != self._last_quality))
 
 class _sparkplug_base_device(object):
 	def __init__(self):
@@ -119,7 +128,7 @@ class _sparkplug_base_device(object):
 		self._needs_to_send_birth = True
 
 	def get_tag_names(self):
-		return [m._name for m in self._tags]
+		return [m.name for m in self._tags]
 
 	def _get_next_seq(self):
 		raise NotImplementedError('_get_next_seq not implemented on this class')
@@ -127,7 +136,8 @@ class _sparkplug_base_device(object):
 	def _attach_tag(self,tag):
 		next_index = len(self._tags)
 		self._tags.append(tag)
-		# TODO - If already birthed/connected, send death
+		if self.is_connected():
+			self.send_death()
 		self._needs_to_send_birth = True
 		return next_index
 
@@ -153,12 +163,17 @@ class _sparkplug_base_device(object):
 	def send_death(self):
 		raise NotImplementedError('send_death not implemented on this class')
 
-	def send_data(self, aliases=None):
-		# TODO - Skip if not connected
+	def send_data(self, aliases=None, changed_only=False):
+		if not self.is_connected():
+			self._logger.warning('Trying to send data when not connected. Skipping.')
+			return
 		if self._needs_to_send_birth:
 			return self.send_birth()
 		if aliases is None:
 			aliases = range(len(self._tags))
+		if changed_only:
+			aliases = [x for x in aliases if self._tags[x].changed_since_last_sent()]
+
 		tx_payload = self._get_payload(aliases,False)
 		topic = self._get_topic('DATA')
 		return self._mqtt_client.publish(topic,tx_payload.SerializeToString())
@@ -190,6 +205,9 @@ class _sparkplug_base_device(object):
 		# We can return True to let the caller know it was handled
 		return True
 
+	def is_connected(self):
+		raise NotImplementedError('is_connected not implemented on this class')
+
 class sparkplug_node(_sparkplug_base_device):
 	def __init__(self,mqtt_params,group_id,edge_node_id,provide_bdSeq=True,provide_controls=True,logger=None):
 		super().__init__()
@@ -210,7 +228,7 @@ class sparkplug_node(_sparkplug_base_device):
 
 		if provide_bdSeq:
 			new_tag = sparkplug_metric(self,'bdSeq',sparkplug_b.Datatype.Int64,value=sparkplug_b.get_sparkplug_time())
-			self._bdseq_alias = new_tag._alias
+			self._bdseq_alias = new_tag.alias
 		else:
 			self._bdseq_alias = None
 		if provide_controls:
@@ -224,7 +242,9 @@ class sparkplug_node(_sparkplug_base_device):
 		return seq_to_use
 
 	def send_birth(self):
-		# TODO - Skip if not connected
+		if not self.is_connected():
+			self._logger.warning('Trying to send birth when not connected. Skipping.')
+			return
 		self._sequence = 0
 		tx_payload = self._get_payload(None,True)
 		topic = self._get_topic('BIRTH')
@@ -239,7 +259,6 @@ class sparkplug_node(_sparkplug_base_device):
 	def _get_death_payload(self,will):
 		if self._bdseq_alias is not None:
 			if will:
-				# TODO - Find a way to update/retain a proper bdSeq instead of using the time?
 				new_bdseq = sparkplug_b.get_sparkplug_time()
 				self._logger.debug('Generating new WILL bdSeq={}'.format(new_bdseq))
 				self._tags[self._bdseq_alias].change_value(new_bdseq,send_immediate=False)
@@ -259,7 +278,9 @@ class sparkplug_node(_sparkplug_base_device):
 		return topic, tx_payload.SerializeToString()
 
 	def send_death(self):
-		# TODO - Skip if not connected
+		if not self.is_connected():
+			self._logger.warning('Trying to send death when not connected. Skipping.')
+			return
 		tx_payload = self._get_death_payload(will=False)
 		topic = self._get_topic('DEATH')
 		pub_result = self._mqtt_client.publish(topic,tx_payload.SerializeToString())
@@ -273,8 +294,9 @@ class sparkplug_node(_sparkplug_base_device):
 		next_index = len(self._subdevices)
 		self._subdevices.append(subdevice)
 		self._all_device_topics.append(subdevice.get_watched_topic())
+		if self.is_connected():
+			self.send_death()
 		self._needs_to_send_birth = True
-		# TODO - If already birthed/connected, send death
 		return next_index
 
 	# TODO - Add another function to remove a subdevice
@@ -302,7 +324,6 @@ class sparkplug_node(_sparkplug_base_device):
 		for d in self._subdevices:
 			d._needs_to_send_birth = True
 		self._mqtt_subscribe()
-		# TODO - Trigger BIRTH via SUBACK?
 
 	def _mqtt_on_disconnect(self, client, userdata, rc):
 		self._logger.warning('MQTT disconnect rc={}'.format(rc))
@@ -322,7 +343,6 @@ class sparkplug_node(_sparkplug_base_device):
 				self._subdevices[(handler_index-1)]._handle_payload(message.topic,rx_payload)
 		else:
 			self._logger.info('Ignoring MQTT message on topic {}'.format(message.topic))
-			# TODO - Add debug helper to decode/print payload anyway?
 
 	def _mqtt_on_subscribe(self, client, userdata, mid, granted_qos):
 		# TODO - Confirm the mid matches our subscription request before assuming we're good to go?
@@ -330,7 +350,6 @@ class sparkplug_node(_sparkplug_base_device):
 
 	def _init_mqtt_client(self,reinit=False):
 		import os
-		# TODO - Fail if already have connected client?
 		curr_params = self._mqtt_params[self._mqtt_param_index]
 		if curr_params['client_id']:
 			self._client_id = curr_params['client_id']
@@ -350,7 +369,9 @@ class sparkplug_node(_sparkplug_base_device):
 		self._is_subscribed = False
 
 	def _prep_client_connection(self):
-		# TODO - Fail if already have connected client?
+		if self._is_connected:
+			self._logger.error('Attempting to start MQTT connection while already connected. Skipping.')
+			return
 		curr_params = self._mqtt_params[self._mqtt_param_index]
 		if curr_params['username']:
 			self._mqtt_client.username_pw_set(curr_params['username'], curr_params['password'])
@@ -368,6 +389,7 @@ class sparkplug_node(_sparkplug_base_device):
 								  keepalive=curr_params['keepalive'])
 
 	def _thread_main(self):
+		# TODO - Add support to timeout bad/failed connections to trigger _reconnect_client
 		self._logger.info('MQTT thread started...')
 		self._prep_client_connection()
 		while not self._thread_terminate:
@@ -376,7 +398,7 @@ class sparkplug_node(_sparkplug_base_device):
 				self._reconnect_client = False
 				self._init_mqtt_client(reinit=True)
 				self._prep_client_connection()
-			elif self._is_connected and self._is_subscribed:
+			elif self.is_connected():
 				if self._needs_to_send_birth:
 					self.send_birth()
 				else:
@@ -389,7 +411,6 @@ class sparkplug_node(_sparkplug_base_device):
 		self._logger.info('MQTT thread stopped...')
 
 	def online(self):
-		# TODO - Fail if already have connected client?
 		if self._thread is not None:
 			self._logger.warning('MQTT thread already running!')
 			return
@@ -407,13 +428,16 @@ class sparkplug_node(_sparkplug_base_device):
 			self._thread.join()
 			self._thread = None
 
+	def is_connected(self):
+		return self._is_connected and self._is_subscribed
 
 class sparkplug_device(_sparkplug_base_device):
 	def __init__(self,parent_device,name):
 		super().__init__()
-		self._name          = str(name)
+		# TODO - Protect the name from being changed after creation
+		self.name           = str(name)
 		self._parent_device = parent_device
-		self._logger        = parent_device._logger.getChild(self._name)
+		self._logger        = parent_device._logger.getChild(self.name)
 		self._mqtt_client   = parent_device._mqtt_client
 		self._mqtt_logger   = parent_device._mqtt_logger
 		self._parent_index  = self._parent_device._attach_subdevice(self)
@@ -422,7 +446,9 @@ class sparkplug_device(_sparkplug_base_device):
 		return self._parent_device._get_next_seq()
 
 	def send_birth(self):
-		# TODO - Skip if not connected
+		if not self.is_connected():
+			self._logger.warning('Trying to send birth when not connected. Skipping.')
+			return
 		# If the parent device also needs to birth, do that first!
 		if self._parent_device._needs_to_send_birth:
 			return self._parent_device.send_birth()
@@ -434,7 +460,9 @@ class sparkplug_device(_sparkplug_base_device):
 		return pub_result
 
 	def send_death(self):
-		# TODO - Skip if not connected
+		if not self.is_connected():
+			self._logger.warning('Trying to send death when not connected. Skipping.')
+			return
 		tx_payload = self._get_payload([],False)
 		topic = self._get_topic('DEATH')
 		pub_result = self._mqtt_client.publish(topic,tx_payload.SerializeToString())
@@ -443,5 +471,8 @@ class sparkplug_device(_sparkplug_base_device):
 		return pub_result
 
 	def _get_topic(self, cmd_type):
-		return 'spBv1.0/{}/D{}/{}/{}'.format(self._parent_device._group_id,cmd_type,self._parent_device._edge_node_id,self._name)
+		return 'spBv1.0/{}/D{}/{}/{}'.format(self._parent_device._group_id,cmd_type,self._parent_device._edge_node_id,self.name)
+
+	def is_connected(self):
+		return self._parent_device.is_connected()
 
