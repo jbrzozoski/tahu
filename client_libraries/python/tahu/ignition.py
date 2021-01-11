@@ -1,8 +1,6 @@
-# TODO - Get rid of enum to allow python2 support?
 import enum
 
 class QualityCode(enum.IntEnum):
-
 	Bad = -2147483136
 	Bad_AccessDenied = -2147483134
 	Bad_AggregateNotFound = -2147483127

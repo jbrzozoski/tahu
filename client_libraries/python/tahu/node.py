@@ -30,6 +30,7 @@ class sparkplug_metric(object):
 		# TODO - Add support for custom properties, move existing properties into that system...
 		self._parent_device  = parent_device
 		self._logger         = parent_device._logger
+		self._u32_in_long    = parent_device._u32_in_long
 		self.name            = str(name)
 		self._datatype       = sparkplug_b.Datatype(datatype)
 		self._value          = value
@@ -55,7 +56,7 @@ class sparkplug_metric(object):
 			new_metric.properties.keys.append('Quality')
 			p = new_metric.properties.values.add()
 			p.type = sparkplug_b.Datatype.Int32
-			sparkplug_b.value_to_sparkplug(p,p.type,self._quality)
+			sparkplug_b.value_to_sparkplug(p,p.type,self._quality,self._u32_in_long)
 			self._last_quality = self._quality
 		# Ignition ignores most properties except on birth
 		if birth:
@@ -63,26 +64,26 @@ class sparkplug_metric(object):
 				new_metric.properties.keys.append('engLow')
 				p = new_metric.properties.values.add()
 				p.type = self._datatype
-				sparkplug_b.value_to_sparkplug(p,p.type,self._engLow)
+				sparkplug_b.value_to_sparkplug(p,p.type,self._engLow,self._u32_in_long)
 			if self._engHigh is not None:
 				new_metric.properties.keys.append('engHigh')
 				p = new_metric.properties.values.add()
 				p.type = self._datatype
-				sparkplug_b.value_to_sparkplug(p,p.type,self._engHigh)
+				sparkplug_b.value_to_sparkplug(p,p.type,self._engHigh,self._u32_in_long)
 			if self._engUnit is not None:
 				new_metric.properties.keys.append('engUnit')
 				p = new_metric.properties.values.add()
 				p.type = sparkplug_b.Datatype.String
-				sparkplug_b.value_to_sparkplug(p,p.type,self._engUnit)
+				sparkplug_b.value_to_sparkplug(p,p.type,self._engUnit,self._u32_in_long)
 			if self._documentation is not None:
 				new_metric.properties.keys.append('Documentation')
 				p = new_metric.properties.values.add()
 				p.type = sparkplug_b.Datatype.String
-				sparkplug_b.value_to_sparkplug(p,p.type,self._documentation)
+				sparkplug_b.value_to_sparkplug(p,p.type,self._documentation,self._u32_in_long)
 		if self._value is None:
 			new_metric.is_null = True
 		else:
-			sparkplug_b.value_to_sparkplug(new_metric,self._datatype,self._value)
+			sparkplug_b.value_to_sparkplug(new_metric,self._datatype,self._value,self._u32_in_long)
 		self._last_sent = self._value
 
 	def change_value(self,value,quality=None,send_immediate=True):
@@ -100,17 +101,12 @@ class sparkplug_metric(object):
 		return self.alias
 
 	def _handle_sparkplug_command(self,sparkplug_metric):
-		if not sparkplug_metric.HasField('datatype'):
-			self._logger.warning('Metric received without datatype. Ignoring.')
+		# Note that we enforce OUR expected datatype on the value as we pull it from the metric
+		try:
+			value = sparkplug_b.value_from_sparkplug(sparkplug_metric,self._datatype)
+		except sparkplug_b.SparkplugDecodeError as errmsg:
+			self._logger.warning('Sparkplug decode error for tag {}: {}'.format(self.name,errmsg))
 			return
-		payload_datatype = sparkplug_b.Datatype(sparkplug_metric.datatype)
-		# Ignition sometimes will report inexact datatype values in the Sparkplug payload that still
-		# use the same underlying value field of the Payload Metric protobuf...
-		if sparkplug_b.get_value_field_for_datatype(payload_datatype) != sparkplug_b.get_value_field_for_datatype(self._datatype):
-			self._logger.warning('Command received for tag {} with datatype {} but expecting {}. Ignoring.'.format(self.name, payload_datatype, self._datatype))
-			return
-		# But note that we enforce OUR expected datatype on the value as we pull it from the metric
-		value = sparkplug_b.value_from_sparkplug(sparkplug_metric,self._datatype)
 		self._logger.debug('Command received for tag {} = {}'.format(self.name, value))
 		if self._cmd_handler:
 			self._cmd_handler(self, self._cmd_context, value)
@@ -209,10 +205,11 @@ class _sparkplug_base_device(object):
 		raise NotImplementedError('is_connected not implemented on this class')
 
 class sparkplug_node(_sparkplug_base_device):
-	def __init__(self,mqtt_params,group_id,edge_node_id,provide_bdSeq=True,provide_controls=True,logger=None):
+	def __init__(self,mqtt_params,group_id,edge_node_id,provide_bdSeq=True,provide_controls=True,logger=None,u32_in_long=False):
 		super().__init__()
 		self._mqtt_params = list(mqtt_params)
 		self._mqtt_param_index = 0
+		self._u32_in_long = bool(u32_in_long)
 		self._group_id         = str(group_id)
 		self._edge_node_id     = str(edge_node_id)
 		node_reference = '{}_{}'.format(self._group_id,self._edge_node_id)
@@ -440,6 +437,7 @@ class sparkplug_device(_sparkplug_base_device):
 		self._logger        = parent_device._logger.getChild(self.name)
 		self._mqtt_client   = parent_device._mqtt_client
 		self._mqtt_logger   = parent_device._mqtt_logger
+		self._u32_in_long   = parent_device._u32_in_long
 		self._parent_index  = self._parent_device._attach_subdevice(self)
 
 	def _get_next_seq(self):

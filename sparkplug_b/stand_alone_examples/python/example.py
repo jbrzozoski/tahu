@@ -55,7 +55,14 @@ def fancier_date_handler(tag, context, value):
 	# We report back the time NOW as the new value, and not the old value or the one we received.
 	tag.change_value(sparkplug_b.get_sparkplug_time())
 
-myNode = node.sparkplug_node(myMqttParams,myGroupId,myNodeName,logger=logger)
+# There is an oddity in Ignition up to at least version 8.1.1 in how it handles Sparkplug.  It uses
+# the long_value field for UInt32 on both send and receive, which disagrees with int_value as called
+# out by the Eclipse Sparkplug spec v2.2 section 15.2.1.  Our library is flexible and will accept
+# incoming values from either value field gracefully. However, outgoing UInt32 needs to be done in
+# the same manner as Ignition for them to receive it properly.
+#
+# The optional u32_in_long value enables this behavior for a node and all devices and metrics under it.
+myNode = node.sparkplug_node(myMqttParams,myGroupId,myNodeName,logger=logger,u32_in_long=True)
 mySubdevice = node.sparkplug_device(myNode,myDeviceName)
 s8_test_tag = node.sparkplug_metric(mySubdevice, 'int8_test', sparkplug_b.Datatype.Int8, value=-1, cmd_handler=sample_cmd_handler)
 s16_test_tag = node.sparkplug_metric(mySubdevice, 'int16_test', sparkplug_b.Datatype.Int16, value=-1, cmd_handler=sample_cmd_handler)
