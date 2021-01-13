@@ -142,9 +142,9 @@ def value_to_sparkplug(container,datatype,value,u32_in_long=False):
 	elif datatype in [Datatype.Bytes, Datatype.File]:
 		container.bytes_value = value
 	elif datatype == Datatype.Template:
-		container.template_value = value.to_sparkplug_template(u32_in_long)
+		value.to_sparkplug_template(container.template_value,u32_in_long)
 	elif datatype == Datatype.DataSet:
-		container.dataset_value = value.to_sparkplug_dataset(u32_in_long)
+		value.to_sparkplug_dataset(container.dataset_value,u32_in_long)
 	else:
 		raise ValueError('Unhandled datatype={} in value_to_sparkplug'.format(datatype))
 
@@ -215,14 +215,12 @@ def mqtt_params(server,port=1883,
 
 class Dataset:
 	# TODO - Add methods to allow easy value access by indices, e.g. with Dataset D you could just reference D[0][0] or D[0][column_name]
-	def __init__(self, column_names, column_datatypes):
-		self._column_names = [str(n) for n in column_names]
-		self._column_datatypes = [Datatype(d) for d in column_datatypes]
-		self._num_columns = len(self._column_names)
-		if self._num_columns != len(self._column_datatypes):
-			raise ValueError('column_names and column_datatypes must have save number of elements')
+	def __init__(self, name_datatype_tuples):
+		self._num_columns = len(name_datatype_tuples)
 		if self._num_columns == 0:
 			raise ValueError('dataset must have at least one column')
+		self._column_names = [str(n) for n in name_datatype_tuples.keys()]
+		self._column_datatypes = [Datatype(d) for d in name_datatype_tuples.values()]
 		self._data = []
 
 	def add_rows(self, data, keyed=False, in_columns=False, insert_index=None):
@@ -308,8 +306,7 @@ class Dataset:
 			data[self._column_names[k]] = [self._data[r][k] for r in range(start_index, end_index)]
 		return data
 
-	def to_sparkplug_dataset(self,u32_in_long=False):
-		sp_dataset = sparkplugb_pb2.Payload.DataSet()
+	def to_sparkplug_dataset(self,sp_dataset,u32_in_long=False):
 		sp_dataset.num_of_columns = self._num_columns
 		sp_dataset.columns.extend(self._column_names)
 		sp_dataset.types.extend(self._column_datatypes)
@@ -323,13 +320,13 @@ class Dataset:
 	@classmethod
 	def from_sparkplug_dataset(cls, sp_dataset):
 		try:
-			new_dataset = cls(sp_dataset.columns, sp_dataset.types)
+			new_dataset = cls(dict(zip(sp_dataset.columns, sp_dataset.types)))
 		except ValueError as errmsg:
 			raise SparkplugDecodeError(errmsg)
 		for sp_row in sp_dataset.rows:
 			new_row = []
-			for c in range(self._num_columns):
-				value = value_from_sparkplug(sp_row.elements[c], self._column_datatypes[c])
+			for c in range(new_dataset._num_columns):
+				value = value_from_sparkplug(sp_row.elements[c], new_dataset._column_datatypes[c])
 				new_row.append(value)
 			new_dataset._data.append(new_row)
 		return new_dataset
