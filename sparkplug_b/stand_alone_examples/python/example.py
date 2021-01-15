@@ -10,7 +10,7 @@
 # *
 # * Contributors:
 # *   Cirrus Link Solutions - initial implementation
-# *   Justin Brzozoski @ SignalFire Telemetry - major rewrite
+# *   Justin Brzozoski @ SignalFire Wireless Telemetry - major rewrite
 # ********************************************************************************/
 import logging
 logging.basicConfig()

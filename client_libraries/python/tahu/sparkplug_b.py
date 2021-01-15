@@ -9,7 +9,7 @@
 # *
 # * Contributors:
 # *   Cirrus Link Solutions - initial implementation
-# *   Justin Brzozoski @ SignalFire Telemetry - major rewrite
+# *   Justin Brzozoski @ SignalFire Wireless Telemetry - major rewrite
 # ********************************************************************************/
 from tahu import sparkplug_b_pb2
 import time
