@@ -43,6 +43,8 @@ class Datatype(enum.IntEnum):
 	PropertySetList = 21
 
 PYTHON_TYPE_PER_DATATYPE = {
+	# TODO - Figure out the best way to handle the complex types in this list.
+	# For now, they are commented out to help indicate they are non-standard.
 	Datatype.Unknown : None,
 	Datatype.Int8 : int,
 	Datatype.Int16 : int,
@@ -59,10 +61,22 @@ PYTHON_TYPE_PER_DATATYPE = {
 	Datatype.DateTime : int,
 	Datatype.Text : str,
 	Datatype.UUID : str,
-	#Datatype.DataSet : Dataset,
+	#Datatype.DataSet : lambda x : x,
 	Datatype.Bytes : bytes,
 	Datatype.File : bytes,
-	#Datatype.Template : Template,
+	#Datatype.Template : lambda x : x,
+	#Datatype.PropertySet : lambda x : x,
+	#Datatype.PropertySetList : lambda x : x,
+}
+
+# This is an imperfect list, but useful when you just want to send a
+# variable from Python to Sparkplug without thinking too hard about it.
+DATATYPE_PER_PYTHONTYPE = {
+	int : Datatype.Int64,
+	float : Datatype.Double,
+	bool : Datatype.Boolean,
+	str : Datatype.String,
+	bytes : Datatype.Bytes,
 }
 
 # NOTE: This is against spec, but is useful when talking to an imperfect
@@ -208,12 +222,9 @@ def mqtt_params(server,port=1883,
 	mqtt_params['keyfile'] = keyfile
 	return mqtt_params
 
-# TODO - Add dataset and template object types
-# TODO - Test everything below this line
+# TODO - Add template object type
 
-# All the code below this line was just poured out here with no testing at all.  It's alpha quality.  Use at your own risk until I finish it.
-
-class Dataset:
+class Dataset(object):
 	# TODO - Add methods to allow easy value access by indices, e.g. with Dataset D you could just reference D[0][0] or D[0][column_name]
 	def __init__(self, name_datatype_tuples):
 		self._num_columns = len(name_datatype_tuples)

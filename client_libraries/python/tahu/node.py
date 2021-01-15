@@ -1,13 +1,11 @@
 # Tested on Python 3.8.5
-#
-# I think the only thing which may be 3.x dependent is the Enum type, which could probably be removed easily
 
 from enum import Enum
 import threading
 import logging
 import time
 import paho.mqtt.client as mqtt
-from tahu import sparkplug_b, sparkplug_b_pb2
+from tahu import sparkplug_b, sparkplug_b_pb2, ignition
 
 def _rebirth_command_handler(tag, context, value):
 	tag._logger.info('Rebirth command received')
@@ -23,79 +21,61 @@ def _next_server_command_handler(tag, context, value):
 	tag._parent_device._reconnect_client = True
 
 class sparkplug_metric(object):
-	def __init__(self,parent_device,name,datatype,value=None,cmd_handler=None,
-				 cmd_context=None,engUnit=None,engLow=None,engHigh=None,
-				 documentation=None,quality=None):
+	def __init__(self,parent_device,name,datatype=None,value=None,cmd_handler=None,cmd_context=None):
 		# TODO - Protect the name/alias from being changed after creation
 		# TODO - Add support for custom properties, move existing properties into that system...
+		if datatype is None and value is None:
+			raise ValueError('Unable to define metric without explicit datatype or initial value')
 		self._parent_device  = parent_device
 		self._logger         = parent_device._logger
 		self._u32_in_long    = parent_device._u32_in_long
 		self.name            = str(name)
-		self._datatype       = sparkplug_b.Datatype(datatype)
+		if datatype:
+			self._datatype = sparkplug_b.Datatype(datatype)
+		else:
+			if not type(value) in sparkplug_b.DATATYPE_PER_PYTHONTYPE:
+				raise ValueError('Need explicit datatype for Python type {}'.format(type(value)))
+			self._datatype = sparkplug_b.DATATYPE_PER_PYTHONTYPE[type(value)]
+
 		self._value          = value
 		self._last_received  = None
 		self._last_sent      = None
 		self._cmd_handler    = cmd_handler
 		self._cmd_context    = cmd_context
-		self._engUnit        = str(engUnit) if engUnit else None
-		self._engLow         = engLow
-		self._engHigh        = engHigh
-		self._documentation  = str(documentation) if documentation else None
-		self._quality        = int(quality) if quality else None
-		self._last_quality   = None
+		self._properties     = []
 		self.alias           = parent_device._attach_tag(self)
+
+	def _attach_property(self,property):
+		next_index = len(self._properties)
+		self._properties.append(property)
+		# TODO - Add checking/handling depending if we're connected
+		return next_index
 
 	def _fill_in_payload_metric(self,new_metric,birth=False):
 		if birth:
 			new_metric.name = self.name
 		new_metric.alias = self.alias
 		new_metric.datatype = self._datatype
-		# Add properties (engUnit, engLow, engHigh, documentation, quality)
-		if self._quality is not None:
-			new_metric.properties.keys.append('Quality')
-			p = new_metric.properties.values.add()
-			p.type = sparkplug_b.Datatype.Int32
-			sparkplug_b.value_to_sparkplug(p,p.type,self._quality,self._u32_in_long)
-			self._last_quality = self._quality
-		# Ignition ignores most properties except on birth
-		if birth:
-			if self._engLow is not None:
-				new_metric.properties.keys.append('engLow')
-				p = new_metric.properties.values.add()
-				p.type = self._datatype
-				sparkplug_b.value_to_sparkplug(p,p.type,self._engLow,self._u32_in_long)
-			if self._engHigh is not None:
-				new_metric.properties.keys.append('engHigh')
-				p = new_metric.properties.values.add()
-				p.type = self._datatype
-				sparkplug_b.value_to_sparkplug(p,p.type,self._engHigh,self._u32_in_long)
-			if self._engUnit is not None:
-				new_metric.properties.keys.append('engUnit')
-				p = new_metric.properties.values.add()
-				p.type = sparkplug_b.Datatype.String
-				sparkplug_b.value_to_sparkplug(p,p.type,self._engUnit,self._u32_in_long)
-			if self._documentation is not None:
-				new_metric.properties.keys.append('Documentation')
-				p = new_metric.properties.values.add()
-				p.type = sparkplug_b.Datatype.String
-				sparkplug_b.value_to_sparkplug(p,p.type,self._documentation,self._u32_in_long)
+		# Add properties
+		for p in self._properties:
+			# This chunk could arguably be a method of the property, but I
+			# felt it made more sense here because of the way the
+			# PropertySet protobuf object works...
+			if birth or p._report_with_data:
+				new_metric.properties.keys.append(p._name)
+				pvalue = new_metric.properties.values.add()
+				pvalue.type = p._datatype
+				sparkplug_b.value_to_sparkplug(pvalue,pvalue.type,p._value,self._u32_in_long)
+				p._last_sent = p._value
+		# Add the current value or set is_null if None
 		if self._value is None:
 			new_metric.is_null = True
 		else:
 			sparkplug_b.value_to_sparkplug(new_metric,self._datatype,self._value,self._u32_in_long)
 		self._last_sent = self._value
 
-	def change_value(self,value,quality=None,send_immediate=True):
+	def change_value(self,value,send_immediate=True):
 		self._value = value
-		if quality:
-			self._quality = int(quality)
-		if send_immediate:
-			self._parent_device.send_data([self.alias])
-		return self.alias
-
-	def change_quality(self,quality,send_immediate=True):
-		self._quality = int(quality)
 		if send_immediate:
 			self._parent_device.send_data([self.alias])
 		return self.alias
@@ -115,7 +95,54 @@ class sparkplug_metric(object):
 		self._last_received = value
 
 	def changed_since_last_sent(self):
-		return ((self._value != self._last_sent) or (self._quality != self._last_quality))
+		# Check all report_with_data properties
+		for p in self._properties:
+			if p._report_with_data and p.changed_since_last_sent():
+				return True
+		return (self._value != self._last_sent)
+
+class metric_property(object):
+	def __init__(self, parent_metric, name, datatype, value, report_with_data=False):
+		self._parent_metric = parent_metric
+		self._name = str(name)
+		if datatype:
+			self._datatype = sparkplug_b.Datatype(datatype)
+		else:
+			if not type(value) in sparkplug_b.DATATYPE_PER_PYTHONTYPE:
+				raise ValueError('Need explicit datatype for Python type {}'.format(type(value)))
+			self._datatype = sparkplug_b.DATATYPE_PER_PYTHONTYPE[type(value)]
+		self._value = value
+		self._report_with_data = bool(report_with_data)
+		self._last_sent = None
+		self._parent_metric._attach_property(self)
+
+	def changed_since_last_sent(self):
+		return (self._value != self._last_sent)
+
+	def change_value(self, value, send_immediate=False):
+		# TODO - Trigger rebirth if someone changes a property that is not report_with_data?
+		self._value = value
+		if self._report_with_data and send_immediate:
+			self._parent_metric._parent_device.send_data([self._parent_metric.alias])
+		return self._parent_metric.alias
+
+def bulk_properties(parent_metric, property_dict):
+	return [metric_property(parent_metric,name,None,property_dict[name],False) for name in property_dict.keys()]
+
+def ignition_quality_property(parent_metric, value=ignition.QualityCode.Good):
+	return metric_property(parent_metric, 'Quality', sparkplug_b.Datatype.Int32, value, True)
+
+def ignition_low_property(parent_metric, value):
+	return metric_property(parent_metric, 'engLow', parent_metric._datatype, value, False)
+
+def ignition_high_property(parent_metric, value):
+	return metric_property(parent_metric, 'engHigh', parent_metric._datatype, value, False)
+
+def ignition_unit_property(parent_metric, value):
+	return metric_property(parent_metric, 'engUnit', sparkplug_b.Datatype.String, value, False)
+
+def ignition_documentation_property(parent_metric, value):
+	return metric_property(parent_metric, 'Documentation', sparkplug_b.Datatype.String, value, False)
 
 class _sparkplug_base_device(object):
 	def __init__(self):
