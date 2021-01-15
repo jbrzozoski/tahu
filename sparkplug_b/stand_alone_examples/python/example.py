@@ -55,15 +55,21 @@ def fancier_date_handler(tag, context, value):
 	# We report back the time NOW as the new value, and not the old value or the one we received.
 	tag.change_value(sparkplug_b.get_sparkplug_time())
 
-# There is an oddity in Ignition up to at least version 8.1.1 in how it handles Sparkplug.  It uses
-# the long_value field for UInt32 on both send and receive, which disagrees with int_value as called
-# out by the Eclipse Sparkplug spec v2.2 section 15.2.1.  Our library is flexible and will accept
-# incoming values from either value field gracefully. However, outgoing UInt32 needs to be done in
-# the same manner as Ignition for them to receive it properly.
+# There is a discrepancy between Ignition as of version 8.1.1 and the Sparkplug spec as of version 2.2.
+# The spec says in section 15.2.1 that UInt32 should be stored in the int_value field of the protobuf,
+# but Ignition and the reference code have always stored UInt32 in the long_value field.
 #
-# The optional u32_in_long value enables this behavior for a node and all devices and metrics under it.
+# Our library is flexible and will accept incoming values from either value field gracefully.
+# However, outgoing UInt32 can only be done in one or the other.
+#
+# The u32_in_long parameter to sparkplug_node controls this behavior for a node and everything under it.
+# Setting it to True will work in Ignition's style, setting it to False will match the spec's style.
 myNode = node.sparkplug_node(myMqttParams,myGroupId,myNodeName,logger=logger,u32_in_long=True)
 mySubdevice = node.sparkplug_device(myNode,myDeviceName)
+
+# Here's a quick example of how to define one of each of the basic types:
+# The value you pass in now just sets the initial value.
+# Hold onto the return object to be able to adjust the reported value later when online.
 s8_test_tag = node.sparkplug_metric(mySubdevice, 'int8_test', sparkplug_b.Datatype.Int8, value=-1, cmd_handler=sample_cmd_handler)
 s16_test_tag = node.sparkplug_metric(mySubdevice, 'int16_test', sparkplug_b.Datatype.Int16, value=-1, cmd_handler=sample_cmd_handler)
 s32_test_tag = node.sparkplug_metric(mySubdevice, 'int32_test', sparkplug_b.Datatype.Int32, value=-1, cmd_handler=sample_cmd_handler)
@@ -76,10 +82,35 @@ float_test_tag = node.sparkplug_metric(mySubdevice, 'float_test', sparkplug_b.Da
 double_test_tag = node.sparkplug_metric(mySubdevice, 'double_test', sparkplug_b.Datatype.Double, value=1.02, cmd_handler=sample_cmd_handler)
 boolean_test_tag = node.sparkplug_metric(mySubdevice, 'boolean_test', sparkplug_b.Datatype.Boolean, value=True, cmd_handler=sample_cmd_handler)
 string_test_tag = node.sparkplug_metric(mySubdevice, 'string_test', sparkplug_b.Datatype.String, value="Hello, world!", cmd_handler=sample_cmd_handler)
-# A simple example of how to get from a Python datetime to a Sparkplug timestamp
-first_time_report = datetime(2006, 11, 21, 16, 30, tzinfo=timezone.utc)
-first_time_report = sparkplug_b.get_sparkplug_time(first_time_report.timestamp())
-datetime_test_tag = node.sparkplug_metric(mySubdevice, 'datetime_test', sparkplug_b.Datatype.DateTime, value=first_time_report, cmd_handler=fancier_date_handler)
+# If you just want the current time you can use sparkplug_b.get_sparkplug_time() without parameters
+start_time = sparkplug_b.get_sparkplug_time()
+datetime_test_tag = node.sparkplug_metric(mySubdevice, 'datetime_test', sparkplug_b.Datatype.DateTime, value=start_time, cmd_handler=fancier_date_handler)
+# If you want to convert from datetime, here's an example:
+sample_datetime = datetime(2006, 11, 21, 16, 30, tzinfo=timezone.utc)
+alternative_time_sample = sparkplug_b.get_sparkplug_time(sample_datetime.timestamp())
+
+# Properties can be attached to a metric after creating it
+property_test_tag = node.sparkplug_metric(mySubdevice, 'property_test', sparkplug_b.Datatype.UInt64, value=23, cmd_handler=sample_cmd_handler)
+# You can define them manually, one at a time:
+node.metric_property(property_test_tag,'prop_name',sparkplug_b.Datatype.UInt64,value=5,report_with_data=False)
+# If you don't need as much control over datatypes, you can define a group all at once via a dictionary
+node.bulk_properties(property_test_tag, {'dictstr':'whatever','dictdouble':3.14159,'dictint64':64738})
+# And there are helper functions for adding well-known properties that Ignition looks for:
+node.ignition_documentation_property(property_test_tag,'A tag for demonstrating lots of property samples!')
+node.ignition_low_property(property_test_tag,0)
+node.ignition_high_property(property_test_tag,10)
+node.ignition_unit_property(property_test_tag,'smoots')
+# If you have a property that you need to adjust later on the fly, hold onto the return object when you create it:
+property_test_tag_quality = node.ignition_quality_property(property_test_tag)
+
+# Here's an example of making a dataset tag...
+# Locally, they are handled as Dataset objects. When making a new one, you pass in a dict matching column names to datatypes
+sample_dataset = sparkplug_b.Dataset({'U64Col':sparkplug_b.Datatype.UInt64, 'StrCol':sparkplug_b.Datatype.String, 'DoubleCol':sparkplug_b.Datatype.Double})
+# You can manipulate the data with add_rows, get_rows, remove_rows and other methods
+sample_dataset.add_rows([[15,'Fifteen',3.14159],[0,'Zero',6.07E27],[65535,'FunFunFun',(2/3)]])
+# And the dataset object is pushed onto the metric as the value like normal
+dataset_test_tag = node.sparkplug_metric(mySubdevice, 'dataset_sample', sparkplug_b.Datatype.DataSet, value=sample_dataset, cmd_handler=sample_cmd_handler)
+
 myNode.online()
 while not myNode.is_connected():
 	# TODO - Add some sort of timeout feature?
@@ -90,18 +121,20 @@ while True:
 	time.sleep(5)
 
 	# Send some random data on the string_test tag right away... (triggers an immediate data message)
-	string_test_tag.change_value(''.join(random.sample(string.ascii_lowercase,12)))
+	new_string = ''.join(random.sample(string.ascii_lowercase,12))
+	string_test_tag.change_value(new_string)
 
 	# Next, pile up a few changes all on the same subdevice, and trigger a collected
 	# data message containing all of those manually.  (Will not work for tags on different subdevices)
 
-	# Randomly change the quality on the double_test tag...
-	double_test_tag.change_quality(random.choice([ignition.QualityCode.Good, ignition.QualityCode.Bad_Stale]),send_immediate=False)
+	# Randomly change the quality on the property_test_tag...
+	new_quality = random.choice([ignition.QualityCode.Good, ignition.QualityCode.Bad_Stale])
+	property_test_tag_quality.change_value(new_quality,send_immediate=False)
 
 	# Report how many times we've gone around this loop in the uint8
 	u8_test_tag.change_value(loop_count,send_immediate=False)
 
-	# Send anything that has changed since last time
+	# Send any unsent changes
 	mySubdevice.send_data(changed_only=True)
 
 	loop_count = loop_count + 1
